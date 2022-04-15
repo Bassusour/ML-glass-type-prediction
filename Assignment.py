@@ -6,7 +6,10 @@ import matplotlib.pyplot as plt
 from matplotlib.pyplot import figure, subplot, hist, xlabel, ylim, show, boxplot, xticks, ylabel
 from matplotlib.pyplot import (imshow, ylabel, title, colorbar, cm)
 from scipy.linalg import svd
-
+import sklearn.linear_model as lm
+from sklearn.model_selection import train_test_split
+from toolbox_02450 import train_neural_net
+import torch
 
 file_path = 'Data'
 
@@ -59,8 +62,9 @@ Xt = (X-X.mean())/X.std()
 # np.mean(Xt).sum()/9
 # Xt.std()
 
+"""
 # Compute SVD and variance
-U,S,Vh = svd(Xt,full_matrices=False)
+U,S,Vh = svd(Xt,full_matrices=False)`
 V = Vh.transpose()
 rho = (S*S) / (S*S).sum() 
 
@@ -121,7 +125,53 @@ xlabel('Attributes')
 ylabel('Data objects')
 title('Matrix plot of attributtes')
 colorbar()
+"""
 
+# --Classification--
+# torch needs classes to start from 0 instead of 1
+y = y - 1
+X_train, X_test, y_train, y_test = train_test_split(Xt, y, test_size=0.33, random_state=42)
 
+# Multinomial model
+regularization_strength = 0.001
+multiLogModel = lm.LogisticRegression(solver='lbfgs', multi_class='multinomial', 
+                               tol=1e-5, max_iter=1000,
+                               penalty='l2', C=1/regularization_strength)
 
+multiLogModel.fit(X_train,y_train)
+y_test_est = multiLogModel.predict(X_test)
+errorMultiLog = np.sum(y_test_est!=y_test) / len(y_test)
 
+# Artifician Neural Network model
+n_hidden_units = 5 # number of hidden units in the signle hidden layer
+model = lambda: torch.nn.Sequential(
+                            torch.nn.Linear(M, n_hidden_units), #M features to H hiden units
+                            torch.nn.ReLU(), # 1st transfer function
+                            # Output layer:
+                            # H hidden units to C classes
+                            # the nodes and their activation before the transfer 
+                            # function is often referred to as logits/logit output
+                            torch.nn.Linear(n_hidden_units, C), # C logits
+                            # To obtain normalised "probabilities" of each class
+                            # we use the softmax-funtion along the "class" dimension
+                            # (i.e. not the dimension describing observations)
+                            torch.nn.Softmax(dim=1) # final tranfer function, normalisation of logit output
+                            )
+loss_fn = torch.nn.CrossEntropyLoss()
+net, _, _ = train_neural_net(model, loss_fn,
+                             X=torch.tensor(X_train.to_numpy(), dtype=torch.float),
+                             y=torch.tensor(y_train, dtype=torch.long),
+                             n_replicates=3,
+                             max_iter=10000)
+# Determine probability of each class using trained network
+softmax_logits = net(torch.tensor(X_test.to_numpy(), dtype=torch.float))
+# Get the estimated class as the class with highest probability (argmax on softmax_logits)
+y_test_est = (torch.max(softmax_logits, dim=1)[1]).data.numpy() 
+# Determine errors
+errorANN = np.sum(y_test_est != y_test) / len(y_test)
+
+# Baseline model
+baseline = np.bincount(y_test).argmax()
+errorBaseline = np.sum(baseline != y_test) / len(y_test)
+
+# 
