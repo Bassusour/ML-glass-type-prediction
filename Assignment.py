@@ -137,24 +137,23 @@ colorbar()
 
 # --Classification--
 Xt = Xt.to_numpy()
-X_train, X_test, y_train, y_test = train_test_split(Xt, y, test_size=0.33, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(Xt, y, test_size=0.33, random_state=42, shuffle=True)
 
 # Multinomial model
-regularization_strength = 0.01
+regularization_strength = 5
 multiLogModel = lm.LogisticRegression(solver='lbfgs', multi_class='multinomial', 
                                tol=1e-5, max_iter=1000,
-                               penalty='l2', C=1/regularization_strength)
-
+                               penalty='l2', C=regularization_strength)
 multiLogModel.fit(X_train,y_train)
 y_test_est = multiLogModel.predict(X_test)
-errorMultiLog = np.sum(y_test_est!=y_test) / len(y_test)
+errorMultiLog = np.sum(y_test_est != y_test) / len(y_test)
 
 # Classification tree model
 criterion = 'gini'
-dtc = tree.DecisionTreeClassifier(criterion=criterion)
+dtc = tree.DecisionTreeClassifier(criterion=criterion, min_impurity_decrease=0.01)  
 dtc = dtc.fit(X_train, y_train)
 y_test_est = dtc.predict(X_test)
-errorTreeModel = np.sum(y_test_est!=y_test) / len(y_test)
+errorTreeModel = np.sum(y_test_est != y_test) / len(y_test)
 
 # Baseline model
 baseline = np.bincount(y_test).argmax()
@@ -184,7 +183,7 @@ for train_index, test_index in cv_outer.split(Xt):
     
     #fit models
     multiLogModel = lm.LogisticRegression(solver='lbfgs', multi_class='multinomial', 
-                                   tol=1e-5, max_iter=1000,
+                                   tol=1e-5, max_iter=1000000,
                                    penalty='l2')
     
     criterion = 'gini'
@@ -193,9 +192,10 @@ for train_index, test_index in cv_outer.split(Xt):
     baseline = np.bincount(y_train).argmax()
     
     treeSpace = dict()
-    treeSpace['min_impurity_decrease'] = [1, 0.1, 0.01, 0.001]
+    treeSpace['min_impurity_decrease'] = np.arange(0, 0.1, 0.001)
     multSpace = dict()
-    multSpace['C'] = [0.1, 0.2, 0.3, 0.4, 0.5]
+    multSpace['C'] = np.arange(1, 10, 0.1)
+    # [1,2,3,4,5,6,7,8,9,10]
     
     treeSearch = GridSearchCV(decisionTreeModel, treeSpace, scoring='accuracy', cv=cv_inner)
     treeResult = treeSearch.fit(X_train, y_train)
@@ -207,37 +207,36 @@ for train_index, test_index in cv_outer.split(Xt):
     
     yhatTree = bestTreeModel.predict(X_test).reshape(len(X_test), 1)
     yhatMult = bestMultModel.predict(X_test).reshape(len(X_test), 1)
-    
-    # dy = []
-    # dy.append(yhatMult)
-    # dy.append(yhatTree)
     baselineValues = np.full((len(X_test), 1), baseline)
-    # dy.append(baselineValues)
     
     dy = np.concatenate((yhatTree, yhatMult, baselineValues), axis=1)
-    
-    # dy = np.stack(dy, axis=1)
     yhat = np.concatenate((list(np.int_(yhat)), dy), axis=0)
     y_true = np.concatenate((list(np.int_(y_true)), y_test), axis=0)
-    # yhat.append(dy)
     
+    # dont't ask
+    y_test.reset_index(inplace=True, drop=True)
+    y_test1 = y_test.to_numpy(copy=True)
+    y_test2 = y_test1.reshape(len(y_test), 1)
     
+    treeErr = np.sum(yhatTree != y_test2) / len(y_test)
+    multErr = np.sum(yhatMult != y_test2) / len(y_test)
+    baseErr = np.sum(baseline != y_test2) / len(y_test)
     
-    treeErr = np.sum(yhatTree != y_test.to_numpy) / len(y_test)
-    multErr = np.sum(yhatMult != y_test.to_numpy) / len(y_test)
-    baseErr = np.sum(baseline != y_test.to_numpy) / len(y_test)
-    # accuracy_score(y_test, yhatTree)
     outer_results[k,0]= treeErr
     outer_results[k,1]= multErr
     outer_results[k,2]= baseErr
+    
+    print("k: " + str(bestTreeModel.min_impurity_decrease))
+    print("lambda: " + str(bestMultModel.C))
     k = k+1
     
 # Statistical evaluation
 alpha = 0.05
 [thetahat, CI, p] = mcnemar(y_true, yhat[:,0], yhat[:,1], alpha=alpha)
-    
+[thetahat, CI, p] = mcnemar(y_true, yhat[:,0], yhat[:,2], alpha=alpha)
+[thetahat, CI, p] = mcnemar(y_true, yhat[:,1], yhat[:,2], alpha=alpha)
 
-    
+
     
     
     
