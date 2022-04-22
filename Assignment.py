@@ -237,7 +237,177 @@ alpha = 0.05
 [thetahat, CI, p] = mcnemar(y_true, yhat[:,1], yhat[:,2], alpha=alpha)
 
 
+
+
+# =============================================================================
+# Linear Regression Part a
+# =============================================================================
+
+
+# Feature transformation: mean 0, sd 1
+X_transformed = (X-X.mean())/X.std()
+
+
+# Dataframe to numpy array
+X = X.to_numpy()
+
+# Split dataset into features and target vector
+RI_idx = attribute_names.index('RI')
+Si_idx = attribute_names.index('Si')
+Na_idx = attribute_names.index('Na')
+Ca_idx = attribute_names.index('Ca')
+y = X[:,RI_idx]
+
+XSiNaCa = (X[:,Si_idx]*X[:,Na_idx]*X[:,Ca_idx]).reshape(-1,1)
+XSi2 = (X[:,Si_idx]**2).reshape(-1,1)
+
+X_cols = list(range(0,RI_idx)) + list(range(RI_idx+1,len(attribute_names)))
+#X_cols = [1,4,6]
+Xnew = X[:,X_cols]
+#Xnew = np.c_[Xnew, XSiNaCa, XSi2]
+
+
+# Fit ordinary least squares regression model
+model = lm.LinearRegression()
+model.fit(Xnew,y)
+
+
+# Predict RI
+y_est = model.predict(Xnew)
+residual = y_est-y
+
+# Display plots
+figure(figsize=(12,8))
+
+subplot(4,1,3)
+hist(residual,40)
+
+subplot(2,1,1)
+plot(y, y_est, '.g')
+xlabel('RI (true)'); ylabel('RI (estimated)')
+
+#Change to XSi2 to see relation between RI and weight percent of Si^2
+# =============================================================================
+# subplot(2,1,1)
+# plot(XSiNaCa, y, '.g')
+# ylabel('RI (true)'); xlabel('Product of weight percentages of 3 metal oxides with highest proportions')
+# =============================================================================
+# =============================================================================
+# subplot(2,1,1)
+# plot(y_est, residual, '.r')
+# xlabel('RI (estimated)'); ylabel('Residual')
+# =============================================================================
+
+show()
+
+
+# Fit ordinary least squares regression model (product of 3 oxides)
+model = lm.LinearRegression()
+model.fit(XSiNaCa,y)
+
+# Predict RI
+y_est = model.predict(XSiNaCa)
+
+# Display plots
+figure(figsize=(12,8))
+
+subplot(2,1,1)
+plot(y, y_est, '.g')
+xlabel('RI (true)'); ylabel('RI (estimated)')
+
+# =============================================================================
+# subplot(2,1,1)
+# plot(y_est, residual, '.r')
+# xlabel('RI (estimated)'); ylabel('Residual')
+# =============================================================================
+
+subplot(4,1,3)
+hist(residual,40)
+
+
+# =============================================================================
+# Regularization
+# =============================================================================
+# Add offset attribute
+X = np.concatenate((np.ones((X.shape[0],1)),X),1)
+attribute_names = [u'Offset']+attribute_names
+M = M+1
+
+## Crossvalidation
+# Create crossvalidation partition for evaluation
+K = 10
+CV = model_selection.KFold(K, shuffle=True)
+
+# Values of lambda
+lambdas = np.power(10.,range(-15,9))
+
+# Initialize variables
+Error_train = np.empty((K,1))
+Error_test = np.empty((K,1))
+Error_train_rlr = np.empty((K,1))
+Error_test_rlr = np.empty((K,1))
+Error_train_nofeatures = np.empty((K,1))
+Error_test_nofeatures = np.empty((K,1))
+w_rlr = np.empty((M,K))
+mu = np.empty((K, M-1))
+sigma = np.empty((K, M-1))
+w_noreg = np.empty((M,K))
+
+k=0
+for train_index, test_index in CV.split(X,y):
     
+    # extract training and test set for current CV fold
+    X_train = X[train_index]
+    y_train = y[train_index]
+    X_test = X[test_index]
+    y_test = y[test_index]
+    internal_cross_validation = 10    
+    
+    opt_val_err, opt_lambda, mean_w_vs_lambda, train_err_vs_lambda, test_err_vs_lambda = rlr_validate(X_train, y_train, lambdas, internal_cross_validation)
+
+    mu[k, :] = np.mean(X_train[:, 1:], 0)
+    sigma[k, :] = np.std(X_train[:, 1:], 0)
+    
+    X_train[:, 1:] = (X_train[:, 1:] - mu[k, :] ) / sigma[k, :] 
+    X_test[:, 1:] = (X_test[:, 1:] - mu[k, :] ) / sigma[k, :] 
+    
+    Xty = X_train.T @ y_train
+    XtX = X_train.T @ X_train
+    
+    # Compute mean squared error without using the input data at all
+    Error_train_nofeatures[k] = np.square(y_train-y_train.mean()).sum(axis=0)/y_train.shape[0]
+    Error_test_nofeatures[k] = np.square(y_test-y_test.mean()).sum(axis=0)/y_test.shape[0]
+
+    # Estimate weights for the optimal value of lambda, on entire training set
+    lambdaI = opt_lambda * np.eye(M)
+    lambdaI[0,0] = 0 # Do no regularize the bias term
+    w_rlr[:,k] = np.linalg.solve(XtX+lambdaI,Xty).squeeze()
+    # Compute mean squared error with regularization with optimal lambda
+    Error_train_rlr[k] = np.square(y_train-X_train @ w_rlr[:,k]).sum(axis=0)/y_train.shape[0]
+    Error_test_rlr[k] = np.square(y_test-X_test @ w_rlr[:,k]).sum(axis=0)/y_test.shape[0]
+
+    # Estimate weights for unregularized linear regression, on entire training set
+    w_noreg[:,k] = np.linalg.solve(XtX,Xty).squeeze()
+    # Compute mean squared error without regularization
+    Error_train[k] = np.square(y_train-X_train @ w_noreg[:,k]).sum(axis=0)/y_train.shape[0]
+    Error_test[k] = np.square(y_test-X_test @ w_noreg[:,k]).sum(axis=0)/y_test.shape[0]
+
+    # Display the results for the last cross-validation fold
+    if k == K-1:
+        figure(k, figsize=(12,8))
+        
+        subplot(1,2,2)
+        title('Optimal lambda: 1e{0}'.format(np.log10(opt_lambda)))
+        loglog(lambdas,train_err_vs_lambda.T,'b.-',lambdas,test_err_vs_lambda.T,'r.-')
+        xlabel('Regularization factor')
+        ylabel('Squared error (crossvalidation)')
+        legend(['Train error','Validation error'])
+        grid()
+
+
+    k+=1
+
+show()
     
     
     
